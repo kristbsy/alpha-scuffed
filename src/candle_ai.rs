@@ -1,34 +1,21 @@
+use std::iter::zip;
+
 use candle_core::{DType, Device, Tensor};
 use candle_nn::{linear, Linear, Module, Optimizer, VarBuilder, VarMap};
+use itertools::Itertools;
 
-use crate::{
-    game::{Game, Policy},
-    model::TrainableModel,
-};
+use crate::model::TrainableModel;
 
 const DEVICE: Device = Device::Cpu;
 
 pub struct SimpleModel<const N: usize, const I: usize> {
     layer1: Linear,
     layer2: Linear,
-    layer3: Linear,
+    visit_head: Linear,
+    score_head: Linear,
     //varmap: VarMap,
     optimizer: candle_nn::AdamW,
 }
-/*
-impl<const N: usize, const I: usize> SimpleModel<N, I> {
-    pub fn new(vb: VarBuilder) -> candle_core::Result<Self> {
-        let hidden_dim = 32;
-        let l1 = linear(I, hidden_dim, vb.pp("layer 1"))?;
-        let l2 = linear(hidden_dim, hidden_dim, vb.pp("layer 2"))?;
-        let l3 = linear(hidden_dim, N, vb.pp("layer 3"))?;
-        Ok(Self {
-            layer1: l1,
-            layer2: l2,
-            layer3: l3,
-        })
-    }
-}*/
 
 impl<const N: usize, const I: usize> TrainableModel<N, I> for SimpleModel<N, I> {
     fn new() -> anyhow::Result<Self> {
@@ -39,15 +26,16 @@ impl<const N: usize, const I: usize> TrainableModel<N, I> for SimpleModel<N, I> 
             lr: 1e-2,
             ..Default::default()
         };
-        let l1 = linear(I, hidden_dim, vb.pp("layer 1"))?;
-        let l2 = linear(hidden_dim, hidden_dim, vb.pp("layer 2"))?;
-        let l3 = linear(hidden_dim, N, vb.pp("layer 3"))?;
+        let layer1 = linear(I, hidden_dim, vb.pp("layer 1"))?;
+        let layer2 = linear(hidden_dim, hidden_dim, vb.pp("layer 2"))?;
+        let visit_head = linear(hidden_dim, N, vb.pp("layer 3"))?;
+        let score_head = linear(hidden_dim, 1, vb.pp("score_head"))?;
         let optimizer = candle_nn::AdamW::new(varmap.all_vars(), optim_config)?;
         Ok(Self {
-            layer1: l1,
-            layer2: l2,
-            layer3: l3,
-            //varmap,
+            layer1,
+            layer2,
+            visit_head,
+            score_head,
             optimizer,
         })
     }
@@ -59,11 +47,13 @@ impl<const N: usize, const I: usize> TrainableModel<N, I> for SimpleModel<N, I> 
             (dataset.game_states.len(), I),
             &DEVICE,
         )?;
-        let y = Tensor::from_vec(
-            dataset.visit_stats.iter().cloned().flatten().collect(),
-            (dataset.visit_stats.len(), N),
-            &DEVICE,
-        )?;
+        let scores_vec = dataset.scores.to_vec();
+        let visit_vec = dataset.visit_stats.clone();
+        let test: Vec<_> = zip(scores_vec, visit_vec)
+            .map(|(score, visits)| visits.iter().cloned().chain([score]).collect::<Vec<_>>())
+            .flatten()
+            .collect();
+        let y = Tensor::from_vec(test, (dataset.visit_stats.len(), N + 1), &DEVICE)?;
         eprintln!("x = {:#?}", x);
         eprintln!("y = {:#?}", y);
         for epoch in 0..EPOCHS {
@@ -78,12 +68,16 @@ impl<const N: usize, const I: usize> TrainableModel<N, I> for SimpleModel<N, I> 
     }
 
     fn predict(&self, state: [f32; I]) -> Result<([f32; N], f32), anyhow::Error> {
-        let moves = self.predict_moves(state)?;
-        let score = self.predict_score(state)?;
-        Ok((moves, score))
+        let state_tensor = Tensor::from_slice(&state, (1, I), &DEVICE)?;
+        let predictions = self.forward(&state_tensor)?;
+        let predictions: Vec<f32> = predictions.squeeze(0)?.to_vec1()?;
+        let visits: [f32; N] = predictions[0..N].try_into()?;
+        let score = predictions[N];
+        Ok((visits, score))
     }
 
     fn predict_moves(&self, state: [f32; I]) -> anyhow::Result<[f32; N]> {
+        /*
         let state_tensor = Tensor::from_slice(&state, (1, I), &DEVICE)?;
         let visits = self.forward(&state_tensor)?;
         let visits: Vec<f32> = visits.squeeze(0)?.to_vec1()?;
@@ -91,10 +85,12 @@ impl<const N: usize, const I: usize> TrainableModel<N, I> for SimpleModel<N, I> 
             .try_into()
             .expect("wrong output dimension from visits prediction SimpleModel");
         Ok(visits_array)
+        */
+        Ok(self.predict(state)?.0)
     }
 
     fn predict_score(&self, state: [f32; I]) -> anyhow::Result<f32> {
-        todo!()
+        Ok(self.predict(state)?.1)
     }
 }
 
@@ -104,23 +100,10 @@ impl<const N: usize, const I: usize> Module for SimpleModel<N, I> {
         let x = x.relu()?;
         let x = self.layer2.forward(&x)?;
         let x = x.relu()?;
-        let x = self.layer3.forward(&x)?;
-        let x = candle_nn::ops::softmax(&x, 1)?;
-        Ok(x)
-    }
-}
-
-struct TemperaturedAiPolicy<const N: usize, const I: usize> {
-    model: SimpleModel<N, I>,
-}
-
-impl<const N: usize, const I: usize, T: Game<N, I>> Policy<N, I, T> for TemperaturedAiPolicy<N, I> {
-    fn select_move(&self, game: &T) -> anyhow::Result<usize> {
-        todo!()
-    }
-
-    fn select_moves_batch(&self, games: Vec<&T>) -> anyhow::Result<Vec<usize>> {
-        todo!()
+        let visit_logits = self.visit_head.forward(&x)?;
+        let score = self.score_head.forward(&x)?.tanh()?;
+        let visit_dist = candle_nn::ops::softmax(&visit_logits, 1)?;
+        Ok(Tensor::cat(&[&visit_dist, &score], 1)?)
     }
 }
 

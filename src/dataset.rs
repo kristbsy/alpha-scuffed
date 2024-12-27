@@ -24,6 +24,7 @@ pub fn create_dataset<
 >(
     num_games: usize,
     policy: U,
+    generation: usize,
 ) -> anyhow::Result<Dataset<N, I>> {
     let mut game_states: Vec<[f32; I]> = Vec::new();
     let mut scores: Vec<f32> = Vec::new();
@@ -31,19 +32,26 @@ pub fn create_dataset<
     for i in 0..num_games {
         let mut game = T::new();
         let mut flipped = false;
-        if i == num_games - 1 {
-            println!("{}", game);
-        }
         while !game.game_ended() {
-            let stats = mcts::<N, I, T, U>(&game, &policy)?;
-            let visit_stat = stats.node_visits;
-            let state = stats.game_state;
-            game.perform_move(stats.best_move_index);
+            if flipped {
+                game.flip_board();
+            }
+            println!("{}", game);
+            if flipped {
+                game.flip_board();
+            }
+
+            let game_stats = mcts::<N, I, T, U>(&game, &policy, generation)?;
+            game.perform_move(game_stats.best_move_index);
             game.flip_board();
-            game_states.push(state);
-            scores.push(stats.score);
-            visit_stats.push(visit_stat);
             flipped = !flipped;
+
+            let variations = T::get_game_variations(&game_stats);
+            for stats in variations {
+                game_states.push(stats.game_state);
+                scores.push(stats.score);
+                visit_stats.push(stats.node_visits);
+            }
         }
         if i % 10 == 0 {
             println!("Simulated {} games", i);

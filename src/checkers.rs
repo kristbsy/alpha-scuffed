@@ -3,7 +3,10 @@ use std::fmt::Display;
 use anyhow::Ok;
 use rand::seq::IteratorRandom;
 
-use crate::game::{Game, Players, SimpleBoardState};
+use crate::{
+    game::{Game, Players, SimpleBoardState},
+    mcts::GameStats,
+};
 
 impl Checkers {
     pub fn print(&self) {
@@ -177,6 +180,10 @@ impl Game<9, 18> for Checkers {
             }
         }
         out_slice
+    }
+
+    fn get_game_variations(stats: &GameStats<9, 18>) -> Vec<GameStats<9, 18>> {
+        vec![stats.clone()]
     }
 }
 

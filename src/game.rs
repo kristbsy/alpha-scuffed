@@ -3,6 +3,8 @@ use std::any;
 use anyhow::{ensure, Result};
 use rand::seq::IteratorRandom;
 
+use crate::mcts::GameStats;
+
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum SimpleBoardState {
     Empty,
@@ -106,11 +108,14 @@ pub trait Game<const N: usize, const I: usize>: Clone {
     fn current_player(&self) -> Players;
     fn flip_board(&mut self);
     fn get_game_state_slice(&self) -> [f32; I];
+    fn get_game_variations(stats: &GameStats<N, I>) -> Vec<GameStats<N, I>>;
 }
 
 pub trait Policy<const N: usize, const I: usize, T: Game<N, I>> {
     fn select_move(&self, game: &T) -> anyhow::Result<usize>;
     fn select_moves_batch(&self, games: Vec<&T>) -> anyhow::Result<Vec<usize>>;
+    fn predict_score(&self, game: &T) -> anyhow::Result<f32>;
+    fn can_predict_score(&self) -> bool;
 }
 
 pub struct RandomPolicy {}
@@ -130,5 +135,13 @@ impl<const N: usize, const I: usize, T: Game<N, I>> Policy<N, I, T> for RandomPo
 
     fn select_moves_batch(&self, games: Vec<&T>) -> anyhow::Result<Vec<usize>> {
         games.iter().map(|game| self.select_move(*game)).collect()
+    }
+
+    fn predict_score(&self, game: &T) -> Result<f32> {
+        todo!()
+    }
+
+    fn can_predict_score(&self) -> bool {
+        false
     }
 }

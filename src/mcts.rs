@@ -93,9 +93,15 @@ fn select_leaf<const N: usize, const I: usize, T: Game<N, I>>(
     node.id()
 }
 
+fn skip_rollout(generation: usize) -> bool {
+    let skip_rollout_prob = (generation as f32 / 10.0 + 0.5).clamp(0.2, 1.0);
+    skip_rollout_prob > rand::random()
+}
+
 pub fn mcts<const N: usize, const I: usize, T: Game<N, I>, U: Policy<N, I, T>>(
     root_game: &T,
     policy: &U,
+    generation: usize,
 ) -> anyhow::Result<GameStats<N, I>> {
     const SIMULATIONS: usize = 1000;
     let mut mcts_tree: Tree<MCTSData<N, I, T>> = Tree::new(MCTSData::new(root_game.clone()));
@@ -117,8 +123,13 @@ pub fn mcts<const N: usize, const I: usize, T: Game<N, I>, U: Policy<N, I, T>>(
             continue;
         }
 
-        let result = simulate::<N, I, T, U>(game, policy, Players::Player)?;
-        let points = result.points();
+        let points;
+        if policy.can_predict_score() && skip_rollout(generation) {
+            points = policy.predict_score(game)?;
+        } else {
+            let result = simulate::<N, I, T, U>(game, policy, Players::Player)?;
+            points = result.points();
+        }
 
         expand(&mut cur_node);
         backprop(&mut cur_node, points);
@@ -126,6 +137,7 @@ pub fn mcts<const N: usize, const I: usize, T: Game<N, I>, U: Policy<N, I, T>>(
     Ok(get_tree_stats(&mcts_tree))
 }
 
+#[derive(Clone)]
 pub struct GameStats<const N: usize, const I: usize> {
     pub best_move_index: usize,
     pub game_state: [f32; I],
@@ -137,7 +149,7 @@ fn get_tree_stats<const N: usize, const I: usize, T: Game<N, I>>(
     tree: &Tree<MCTSData<N, I, T>>,
 ) -> GameStats<N, I> {
     let child_datas: Vec<_> = tree.root().children().map(|thing| thing.value()).collect();
-    let score = tree.root().value().score;
+    let score = tree.root().value().score / tree.root().value().visits as f32;
     let mut visit_stats = [0.0_f32; N];
     for data in &child_datas {
         // Soundness: Only the root node is none, so source_move here should always be Some

@@ -39,14 +39,14 @@ fn training_loop<
 >(
     generations: usize,
 ) -> anyhow::Result<()> {
-    let mut dataset = create_dataset::<N, I, T, RandomPolicy>(100, RandomPolicy {})?;
+    let mut dataset = create_dataset::<N, I, T, RandomPolicy>(100, RandomPolicy {}, 0)?;
     save_dataset(&dataset.clone().into(), String::from("initial_dataset"));
     for generation in 0..generations {
         let mut model: M = M::new()?;
         model.train(dataset)?;
         // TODO: save model
         let policy = AiPolicy::<N, I, M> { model };
-        dataset = create_dataset::<N, I, T, AiPolicy<N, I, M>>(100, policy)?;
+        dataset = create_dataset::<N, I, T, AiPolicy<N, I, M>>(50, policy, generation)?;
         save_dataset(
             &dataset.clone().into(),
             format!("generation_{}", generation),
@@ -60,5 +60,5 @@ fn main() -> anyhow::Result<()> {
     //training_loop::<25, 50, Hex<25, 50>>(1)
     const N: usize = 64;
     const I: usize = N * 2;
-    training_loop::<N, I, Hex<N, I>, SimpleModel<N, I>>(5)
+    training_loop::<N, I, Hex<N, I>, SimpleModel<N, I>>(10)
 }

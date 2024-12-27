@@ -3,7 +3,10 @@ use std::{default, fmt::Display};
 use itertools::Itertools;
 use tinyvec::ArrayVec;
 
-use crate::game::{Game, Players, SimpleBoardState};
+use crate::{
+    game::{self, Game, Players, SimpleBoardState},
+    mcts::GameStats,
+};
 
 #[derive(Clone, Copy)]
 pub struct Hex<const T: usize, const U: usize> {
@@ -269,6 +272,21 @@ impl<const T: usize, const U: usize> Game<T, U> for Hex<T, U> {
             .collect::<Vec<_>>()
             .try_into()
             .unwrap()
+    }
+
+    fn get_game_variations(stats: &GameStats<T, U>) -> Vec<GameStats<T, U>> {
+        let mut game_state = stats.game_state.clone();
+        game_state.reverse();
+        let mut visits = stats.node_visits;
+        visits.reverse();
+
+        let reversed = GameStats {
+            best_move_index: T - stats.best_move_index - 1,
+            game_state,
+            node_visits: visits,
+            score: stats.score,
+        };
+        vec![stats.clone(), reversed]
     }
 }
 
